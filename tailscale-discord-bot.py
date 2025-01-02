@@ -1,74 +1,195 @@
-import nextcord
-from nextcord.ext import commands, tasks
-import requests
 import os
+import requests
 from datetime import datetime, timedelta, timezone
+import nextcord
+from nextcord.ext import commands
+from nextcord import Interaction, SlashOption
 from dotenv import load_dotenv
+
+# Load environment variables from .env
 load_dotenv()
 
-# Access the secrets
+# Bot and Tailscale settings
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 TAILSCALE_API_TOKEN = os.getenv("TAILSCALE_API_TOKEN")
 TAILSCALE_API_URL = os.getenv("TAILSCALE_API_URL")
-GUILD_ID = int(os.getenv("GUILD_ID"))
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
+
 # Bot setup
 intents = nextcord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-def get_active_tailscale_clients():
-    """
-    Fetch active clients from the Tailscale API and log details for debugging.
-    """
+def fetch_tailscale_data():
     headers = {"Authorization": f"Bearer {TAILSCALE_API_TOKEN}"}
     try:
-        print("Fetching active clients from Tailscale API...")
         response = requests.get(TAILSCALE_API_URL, headers=headers)
-        print(f"Response Status Code: {response.status_code}")
-        
         if response.status_code == 200:
-            data = response.json()
-            # print("Response JSON:")
-            # print(data)  # Logs the full API response for inspection Uncomment for troubleshooting
-
-            # Define the time threshold for "active" devices (e.g., last seen within 5 minutes)
-            active_threshold = datetime.now(timezone.utc) - timedelta(minutes=5)
-
-            # Filter for active clients based on `lastSeen`
-            active_clients = [
-                client for client in data.get("devices", [])
-                if "lastSeen" in client and datetime.fromisoformat(client["lastSeen"].replace("Z", "+00:00")) > active_threshold
-            ]
-
-            print(f"Active Clients Count: {len(active_clients)}")
-            return len(active_clients)
+            return response.json()
         else:
-            print(f"Failed to fetch data. Status Code: {response.status_code}")
-            print(f"Response Text: {response.text}")
-            return 0
+            print(f"Error: {response.status_code}, {response.text}")
+            return None
     except requests.RequestException as e:
-        print(f"Error while fetching data from Tailscale API: {e}")
-        return 0
-@tasks.loop(minutes=5)
-async def update_bot_presence_and_channel():
-    """
-    Update the bot's presence and send a message to a channel with the active clients.
-    """
-    active_clients = get_active_tailscale_clients()
-    activity = nextcord.Game(f"Active Tailscale clients: {active_clients}")
-    await bot.change_presence(activity=activity)
-    
-    guild = bot.get_guild(GUILD_ID)
-    if guild:
-        channel = guild.get_channel(CHANNEL_ID)
-        if channel:
-            await channel.send(f"Currently, there are **{active_clients}** active Tailscale clients!")
+        print(f"Error fetching Tailscale data: {e}")
+        return None
+
+@bot.slash_command(name="active_devices", description="List all currently active devices on Tailscale.")
+async def active_devices(interaction: Interaction):
+    data = fetch_tailscale_data()
+    if not data:
+        await interaction.response.send_message("Failed to fetch data from Tailscale API.")
+        return
+
+    active_threshold = datetime.now(timezone.utc) - timedelta(minutes=5)
+    active_clients = [
+        client for client in data.get("devices", [])
+        if "lastSeen" in client and datetime.fromisoformat(client["lastSeen"].replace("Z", "+00:00")) > active_threshold
+    ]
+
+    if not active_clients:
+        await interaction.response.send_message("No active devices found.")
+        return
+
+    message = "Active Devices:\n"
+    for idx, client in enumerate(active_clients, start=1):
+        message += f"{idx}. Hostname: {client['hostname']}\n   IP: {', '.join(client['addresses'])}\n   OS: {client['os']}\n   Last Seen: {client['lastSeen']}\n\n"
+
+    await interaction.response.send_message(message)
+
+@bot.slash_command(name="device_details", description="Get details of a specific device.")
+async def device_details(
+    interaction: Interaction,
+    device: str = SlashOption(
+        description="Choose a device",
+        autocomplete=True
+    )
+):
+    data = fetch_tailscale_data()
+    if not data:
+        await interaction.response.send_message("Failed to fetch data from Tailscale API.")
+        return
+
+    selected_device = next((client for client in data.get("devices", []) if client["hostname"] == device), None)
+    if not selected_device:
+        await interaction.response.send_message(f"Device '{device}' not found.")
+        return
+
+    message = (
+        f"Device Details:\n"
+        f"Hostname: {selected_device['hostname']}\n"
+        f"IP: {', '.join(selected_device['addresses'])}\n"
+        f"OS: {selected_device['os']}\n"
+        f"Client Version: {selected_device['clientVersion']}\n"
+        f"Last Seen: {selected_device['lastSeen']}\n"
+        f"Tags: {', '.join(selected_device.get('tags', []))}\n"
+    )
+
+    await interaction.response.send_message(message)
+
+@device_details.on_autocomplete("device")
+async def autocomplete_device(interaction: Interaction, value: str):
+    data = fetch_tailscale_data()
+    if not data:
+        await interaction.response.send_message("Failed to fetch data from Tailscale API.")
+        return
+
+    suggestions = [
+        client["hostname"]
+        for client in data.get("devices", [])
+        if value.lower() in client["hostname"].lower()
+    ][:25]
+
+    await interaction.response.send_autocomplete(suggestions)
+
+@bot.slash_command(name="list_tags", description="List all available tags in the Tailscale network.")
+async def list_tags(interaction: Interaction):
+    data = fetch_tailscale_data()
+    if not data:
+        await interaction.response.send_message("Failed to fetch data from Tailscale API.")
+        return
+
+    tags = set(tag for client in data.get("devices", []) for tag in client.get("tags", []))
+
+    if not tags:
+        await interaction.response.send_message("No tags found in the network.")
+        return
+
+    message = "Available Tags:\n" + "\n".join(f"- {tag}" for tag in tags)
+    await interaction.response.send_message(message)
+
+@bot.slash_command(name="filter_devices", description="Filter devices by a tag.")
+async def filter_devices(
+    interaction: Interaction,
+    tag: str = SlashOption(description="Enter a tag to filter devices")
+):
+    data = fetch_tailscale_data()
+    if not data:
+        await interaction.response.send_message("Failed to fetch data from Tailscale API.")
+        return
+
+    filtered_devices = [
+        client for client in data.get("devices", []) if tag in client.get("tags", [])
+    ]
+
+    if not filtered_devices:
+        await interaction.response.send_message(f"No devices found with tag '{tag}'.")
+        return
+
+    message = f"Devices with tag '{tag}':\n"
+    for idx, client in enumerate(filtered_devices, start=1):
+        message += f"{idx}. Hostname: {client['hostname']}\n   IP: {', '.join(client['addresses'])}\n   OS: {client['os']}\n\n"
+
+    await interaction.response.send_message(message)
+
+@bot.slash_command(name="list_users", description="List all users in the Tailscale network.")
+async def list_users(interaction: Interaction):
+    data = fetch_tailscale_data()
+    if not data:
+        await interaction.response.send_message("Failed to fetch data from Tailscale API.")
+        return
+
+    users = set(client["user"] for client in data.get("devices", []))
+
+    if not users:
+        await interaction.response.send_message("No users found in the network.")
+        return
+
+    message = "Users:\n" + "\n".join(f"- {user}" for user in users)
+    await interaction.response.send_message(message)
+
+@bot.slash_command(name="network_status", description="Get a summary of the network status.")
+async def network_status(interaction: Interaction):
+    data = fetch_tailscale_data()
+    if not data:
+        await interaction.response.send_message("Failed to fetch data from Tailscale API.")
+        return
+
+    total_devices = len(data.get("devices", []))
+    active_threshold = datetime.now(timezone.utc) - timedelta(minutes=5)
+    active_devices = [
+        client for client in data.get("devices", [])
+        if "lastSeen" in client and datetime.fromisoformat(client["lastSeen"].replace("Z", "+00:00")) > active_threshold
+    ]
+
+    message = (
+        f"Network Status:\n"
+        f"Total Devices: {total_devices}\n"
+        f"Active Devices: {len(active_devices)}\n"
+    )
+
+    await interaction.response.send_message(message)
 
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
     print("------")
-    update_bot_presence_and_channel.start()
 
-# Run the bot
+    try:
+        # Sync slash commands
+        synced = await bot.sync_application_commands()
+        if synced is not None:
+            print(f"Slash commands synced: {len(synced)} commands")
+        else:
+            print("No new commands to sync.")
+    except Exception as e:
+        print(f"Error syncing slash commands: {e}")
+
 bot.run(BOT_TOKEN)
