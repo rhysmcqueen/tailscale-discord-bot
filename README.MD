@@ -3,7 +3,7 @@
 ## Overview
 The **Tailscale Discord Bot** is a tool that integrates with Tailscale's API to provide network insights directly in Discord. It allows users to query active devices, filter by tags, get device details, and much more, all through a convenient set of slash commands.
 
-docker pull ghcr.io/rhysmcqueen/tailscale-discord-bot/tailscale-discord-bot:latest
+``` docker pull ghcr.io/rhysmcqueen/tailscale-discord-bot/tailscale-discord-bot:latest ```
 ```
 services:
   tailscale-discord-bot:
