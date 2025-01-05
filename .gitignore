@@ -1,2 +1,48 @@
-# Ignore .env file with secrets
+# Byte-compiled and optimized files
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment directory
+.venv/
+env/
+venv/
+
+# Configuration files with secrets
 .env
+*.env
+
+# Python-specific logs and caches
+*.log
+*.sqlite3
+*.pdb
+*.egg
+*.egg-info/
+dist/
+build/
+pip-wheel-metadata/
+*.lock
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# IDE and editor-specific files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Docker-related files (optional, if generated dynamically)
+*.dockerfile
+docker-compose.override.yml
+
+# Test and coverage reports
+htmlcov/
+*.cover
+*.coverage
+*.pytest_cache/
+nosetests.xml
+coverage.xml
+*.pytype/
+.tox/
