@@ -1,7 +1,0 @@
-# Discord bot token
-DISCORD_BOT_TOKEN = ""
-GUILD_ID = "" # Guild (Server) ID
-CHANNEL_ID = ""  # Channel ID
-# Tailscale API token and URL
-TAILSCALE_API_TOKEN = ""
-TAILSCALE_API_URL = "https://api.tailscale.com/api/v2/tailnet/TAILNETNAME/devices"
